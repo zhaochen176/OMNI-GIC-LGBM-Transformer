@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Outputs and intermediate files
+outputs/
+data/interim/
+
+# Large data (optional, if you keep full data locally)
+data/raw/
+data/processed/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
