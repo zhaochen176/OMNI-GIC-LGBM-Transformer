@@ -1,22 +1,37 @@
 # OMNI-GIC-LGBM-Transformer
 
-This repository provides the code structure and (optionally) processed datasets for geomagnetically induced current (GIC) prediction using OMNI solar wind data and a two-stage LightGBM–Transformer framework. Baseline models (RF, CNN, and LSTM) are included for benchmarking under the same feature set and evaluation protocol.
+This repository provides a reproducible research codebase for geomagnetically induced current (GIC) prediction using OMNI solar wind data and a two-stage LightGBM–Transformer framework, as described in the accompanying manuscript.
 
-## Workflow (as described in the manuscript)
-1. **OMNI → Feature construction**: ingest OMNI solar wind parameters, align them to GIC observations, and construct physics-informed and temporal features (e.g., Akasofu ε, SYM-H derivatives, lag features).
-2. **LightGBM stage**: train a LightGBM model to obtain an initial GIC prediction.
-3. **Residual learning stage (Transformer)**: compute prediction residuals and train a Transformer to correct the residuals.
-4. **Evaluation**: report MAE, RMSE, and sMAPE, including bin-wise statistics (0–10, 10–20, 20–30, >30, ALL).
-5. **Baselines**: Random Forest (RF), CNN, and LSTM baselines using the same tabular feature set.
+---
 
-## Repository Structure
-- `configs/`: experiment configurations (paper run, baselines, quick run)
-- `src/`: data preprocessing, feature engineering, model training, and evaluation
-- `data/`: data description and (optionally) example/processed datasets
-- `outputs/`: generated models, metrics, figures, and logs (ignored by default)
+## Key Features
 
-## Quick Start
-> This repository is being organized for reproducibility. The following command will become the unified entry point.
+- End-to-end GIC prediction from solar wind parameters to local GIC measurements  
+- Two-stage hybrid framework:
+  - LightGBM for large-scale trend modeling
+  - Transformer for residual correction and short-term spike enhancement
+- Physics-informed feature construction (e.g., Akasofu ε, SYM-H derivatives, temporal lag features)
+- Unified benchmarking with Random Forest (RF), CNN, and LSTM baselines
+- Reproducible experiments controlled by configuration files
 
-```bash
-python main.py --config configs/paper.yaml --model all
+---
+
+## Workflow (as Described in the Manuscript)
+
+### Stage 1: Feature Construction
+
+OMNI solar wind parameters are ingested and time-aligned with GIC observations.  
+Physics-informed coupling functions and temporal lag features are constructed to form a unified feature set.
+
+### Stage 2: LightGBM Trend Prediction
+
+A LightGBM model is trained to capture the dominant trend and baseline variability of GIC under solar wind forcing.
+
+### Stage 3: Transformer Residual Learning
+
+Prediction residuals from the LightGBM stage are used as targets for a Transformer model, which focuses on short-term nonlinear variations and spike-like behavior.
+
+### Stage 4: Evaluation
+
+Model performance is evaluated using MAE, RMSE, and sMAPE.  
+Metrics are reported both overall and within amplitude bins (0–10, 10–20, 20–30, >30 A).

@@ -1,0 +1,43 @@
+project:
+  name: omni-gic-lgbm-transformer
+  seed: 42
+  run_name: quickrun_lgbm
+
+paths:
+  data_path: data/examples/SG1.csv
+  outputs_dir: outputs
+
+data:
+  date_col: date
+  datetime_col: datetime
+  target_col: GIC1
+  use_abs_target: true
+  sentinel_values: [99999.9, 999.99, 9999.99, 9999999]
+  max_missing_feature_ratio: 0.5
+  test_size: 0.2  # time-based split, last 20% as test
+
+features:
+  time_features: true
+  target_lags: [1, 2, 3, 6, 12]
+  rolling_windows: [3, 6, 12]
+  interactions:
+    - {name: Bz_V_interaction, cols: ["Bz(GSM)", "V"], op: "mul"}
+    - {name: Pdyn_Bz_interaction, cols: ["Pdyn", "Bz(GSM)"], op: "pdyn_absbz"}
+
+model:
+  name: lightgbm
+  params:
+    objective: regression
+    learning_rate: 0.05
+    num_leaves: 63
+    min_data_in_leaf: 20
+    feature_fraction: 0.8
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    lambda_l1: 0.1
+    lambda_l2: 0.1
+    verbosity: -1
+    seed: 42
+  num_boost_round: 1000
+  early_stopping_rounds: 50
+
