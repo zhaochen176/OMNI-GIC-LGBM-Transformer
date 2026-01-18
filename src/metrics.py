@@ -38,47 +38,65 @@ def evaluate_regression(y_true, y_pred) -> dict:
     return out
 
 
-def binned_metrics(y_true, y_pred, edges: list[float]) -> pd.DataFrame:
-    """
-    Bin-wise metrics by target amplitude.
+import numpy as np
+import pandas as pd
 
-    edges: e.g. [0, 2, 3, 5] -> bins:
-      [0,2), [2,3), [3,5), [5, inf), plus an ALL row.
+def binned_metrics(y_true, y_pred, edges):
     """
-    y_true = np.asarray(y_true)
-    y_pred = np.asarray(y_pred)
+    Bin-wise regression metrics with NaN/Inf-safe filtering.
+    edges: e.g., [0, 10, 20, 30] -> bins [0-10), [10-20), [20-30), [>=30], plus ALL
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
 
+    rows = []
+    # build bins
     bins = list(edges) + [np.inf]
     labels = []
     for i in range(len(bins) - 1):
-        lo, hi = bins[i], bins[i + 1]
-        if np.isfinite(hi):
-            labels.append(f"{lo}-{hi}")
+        left = bins[i]
+        right = bins[i + 1]
+        if np.isinf(right):
+            labels.append(f">={int(left)}")
         else:
-            labels.append(f">={lo}")
+            labels.append(f"{int(left)}-{int(right)}")
+    labels.append("ALL")
 
-    rows = []
     for i, lab in enumerate(labels):
-        lo, hi = bins[i], bins[i + 1]
-        mask = (y_true >= lo) & (y_true < hi) if np.isfinite(hi) else (y_true >= lo)
+        if lab == "ALL":
+            mask = np.ones_like(y_true, dtype=bool)
+        else:
+            left = bins[i]
+            right = bins[i + 1]
+            if np.isinf(right):
+                mask = (y_true >= left)
+            else:
+                mask = (y_true >= left) & (y_true < right)
 
-        if int(mask.sum()) == 0:
+        yt = y_true[mask]
+        yp = y_pred[mask]
+
+        # ---- critical: drop NaN/Inf ----
+        finite = np.isfinite(yt) & np.isfinite(yp)
+        yt = yt[finite]
+        yp = yp[finite]
+
+        if yt.size < 2:
             rows.append({
                 "bin": lab,
-                "count": 0,
+                "count": int(yt.size),
                 "MAE": np.nan,
                 "RMSE": np.nan,
                 "R2": np.nan,
-                "sMAPE(%)": np.nan
+                "sMAPE(%)": np.nan,
             })
             continue
 
-        yt, yp = y_true[mask], y_pred[mask]
         m = evaluate_regression(yt, yp)
-        rows.append({"bin": lab, "count": int(mask.sum()), **m})
-
-    # ALL
-    m_all = evaluate_regression(y_true, y_pred)
-    rows.append({"bin": "ALL", "count": int(len(y_true)), **m_all})
+        rows.append({
+            "bin": lab,
+            "count": int(yt.size),
+            **m
+        })
 
     return pd.DataFrame(rows)

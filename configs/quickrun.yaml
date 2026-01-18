@@ -1,7 +1,7 @@
 project:
   name: omni-gic-lgbm-transformer
   seed: 42
-  run_name: quickrun_lgbm
+  run_name: quickrun_all
 
 paths:
   data_path: data/examples/SG1.csv
@@ -14,18 +14,18 @@ data:
   use_abs_target: true
   sentinel_values: [99999.9, 999.99, 9999.99, 9999999]
   max_missing_feature_ratio: 0.5
-  test_size: 0.2  # time-based split, last 20% as test
+  test_size: 0.2
 
 features:
-  time_features: true
-  target_lags: [1, 2, 3, 6, 12]
-  rolling_windows: [3, 6, 12]
-  interactions:
-    - {name: Bz_V_interaction, cols: ["Bz(GSM)", "V"], op: "mul"}
-    - {name: Pdyn_Bz_interaction, cols: ["Pdyn", "Bz(GSM)"], op: "pdyn_absbz"}
+  # physics feature builder is used in pipeline; these options keep naming consistent
+  use_physics: true
+  akasofu_name: Akasofu
+  add_symh_diff1: true
+  add_symh_diff2: true
 
 model:
-  name: lightgbm
+  # choose: lgbm / rf / cnn / lstm / all
+  name: all
   params:
     objective: regression
     learning_rate: 0.05
@@ -41,3 +41,56 @@ model:
   num_boost_round: 1000
   early_stopping_rounds: 50
 
+baselines:
+  sequence:
+    seq_len: 30
+
+  rf:
+    n_estimators: 500
+    max_depth: null
+    min_samples_leaf: 1
+    n_jobs: -1
+    random_state: 42
+
+  cnn:
+    hidden: 64
+    kernel_size: 3
+    dropout: 0.1
+
+  lstm:
+    hidden: 64
+    num_layers: 1
+    dropout: 0.0
+
+  torch_train:
+    epochs: 30
+    batch_size: 256
+    lr: 0.001
+    weight_decay: 0.0
+    device: cpu
+    seed: 42
+
+evaluation:
+  bins: [0, 10, 20, 30]
+  save_predictions: true
+  make_plot: true
+
+
+model:
+  name: hybrid_stage2
+  params: { ... }   
+  num_boost_round: 1000
+  early_stopping_rounds: 50
+
+transformer:
+  sequence_length: 24
+  d_model: 64
+  num_heads: 4
+  ff_dim: 64
+  num_layers: 2
+  dropout: 0.1
+  lr: 0.001
+  batch_size: 32
+  epochs: 100
+  patience: 20
+  validation_split: 0.2
