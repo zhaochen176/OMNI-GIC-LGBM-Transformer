@@ -1,3 +1,4 @@
+# src/models/hybrid/transformer_stage.py
 from __future__ import annotations
 
 import numpy as np
@@ -94,6 +95,12 @@ def build_transformer(
     return model
 
 
+def _select_features(X: np.ndarray, feature_indices: list[int] | None) -> np.ndarray:
+    if feature_indices is None:
+        return X
+    return X[:, feature_indices]
+
+
 def make_residual_sequences(
     X: np.ndarray, residual: np.ndarray, seq_len: int
 ):
@@ -102,11 +109,9 @@ def make_residual_sequences(
     Build pairs: X_seq[t] = X[t-seq_len:t], y_seq[t] = residual[t]
     for t = seq_len..N-1
     """
-    X_seq, y_seq = [], []
-    for t in range(seq_len, len(X)):
-        X_seq.append(X[t - seq_len:t])
-        y_seq.append(residual[t])
-    return np.asarray(X_seq, dtype=np.float32), np.asarray(y_seq, dtype=np.float32)
+    X_seq = np.asarray([X[t - seq_len:t] for t in range(seq_len, len(X))], dtype=np.float32)
+    y_seq = np.asarray([residual[t] for t in range(seq_len, len(X))], dtype=np.float32)
+    return X_seq, y_seq
 
 
 def train_transformer_on_residual(
@@ -116,11 +121,19 @@ def train_transformer_on_residual(
     cfg: dict,
     verbose: int = 0,
 ):
+    """
+    cfg supports:
+      - sequence_length (default 24)
+      - top_k_features (optional): if present, caller should already pass reduced X
+      - d_model, num_heads, ff_dim, num_layers, dropout, lr
+      - batch_size, epochs, validation_split, patience
+      - lr_factor, lr_patience, min_lr
+    """
     seq_len = int(cfg.get("sequence_length", 24))
-    X_seq, y_seq = make_residual_sequences(X_train, residual_train, seq_len)
 
+    X_seq, y_seq = make_residual_sequences(X_train, residual_train, seq_len)
     if len(X_seq) < 50:
-        return None, {"seq_len": seq_len}
+        return None, {"seq_len": seq_len, "n_features": X_train.shape[1]}
 
     model = build_transformer(
         seq_len=seq_len,
@@ -135,7 +148,11 @@ def train_transformer_on_residual(
 
     callbacks = [
         EarlyStopping(patience=int(cfg.get("patience", 20)), restore_best_weights=True),
-        ReduceLROnPlateau(factor=0.5, patience=10, min_lr=1e-6),
+        ReduceLROnPlateau(
+            factor=float(cfg.get("lr_factor", 0.5)),
+            patience=int(cfg.get("lr_patience", 10)),
+            min_lr=float(cfg.get("min_lr", 1e-6)),
+        ),
     ]
 
     model.fit(
@@ -146,22 +163,28 @@ def train_transformer_on_residual(
         callbacks=callbacks,
         verbose=verbose
     )
-    return model, {"seq_len": seq_len}
+    return model, {"seq_len": seq_len, "n_features": X_train.shape[1]}
 
 
 def predict_residual_rolling(
     *,
     model,
     meta: dict,
-    X: np.ndarray,            # [N, F] scaled
+    X: np.ndarray,            # [N, F] scaled (already selected if needed)
 ):
-    """Return residual_pred [N], with NaN for t < seq_len."""
+    """
+    Return residual_pred [N], with NaN for t < seq_len.
+    Uses batched window prediction (fast).
+    """
     seq_len = int(meta["seq_len"])
     out = np.full(len(X), np.nan, dtype=float)
     if model is None:
         return out
+    if len(X) <= seq_len:
+        return out
 
-    for t in range(seq_len, len(X)):
-        seq_in = X[t - seq_len:t].reshape(1, seq_len, X.shape[1]).astype(np.float32)
-        out[t] = float(model.predict(seq_in, verbose=0)[0][0])
+    # Build all windows: [N-seq_len, seq_len, F]
+    Xw = np.asarray([X[t - seq_len:t] for t in range(seq_len, len(X))], dtype=np.float32)
+    yhat = model.predict(Xw, verbose=0).reshape(-1).astype(float)
+    out[seq_len:] = yhat
     return out
