@@ -35,3 +35,10 @@ Prediction residuals from the LightGBM stage are used as targets for a Transform
 
 Model performance is evaluated using MAE, RMSE, and sMAPE.  
 Metrics are reported both overall and within amplitude bins (0–10, 10–20, 20–30, >30 A).
+
+## Quick Start (Reproducibility Test)
+
+After installing the required dependencies, a minimal reproducibility test(SG1) can be run using the public example dataset:
+
+```bash
+python main.py --config configs/quickrun.yaml

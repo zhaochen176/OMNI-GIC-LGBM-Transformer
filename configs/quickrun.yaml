@@ -94,3 +94,25 @@ transformer:
   epochs: 100
   patience: 20
   validation_split: 0.2
+
+model:
+  name: lgbm_transformer
+  # ... lgbm params ...
+
+transformer:
+  attention: global        # 或 sparse
+  sequence_length: 24
+  top_k_features: 15
+  d_model: 64
+  num_heads: 4
+  ff_dim: 64
+  num_layers: 2
+  dropout: 0.1
+  lr: 0.001
+  batch_size: 32
+  epochs: 100
+  validation_split: 0.2
+  patience: 20
+  # sparse only:
+  window_size: 8
+  num_global_tokens: 2

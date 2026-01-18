@@ -11,6 +11,8 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 
+from src.models.hybrid.sparse_attention import SparseAttentionBlock
+
 
 class TransformerBlock(tf.keras.layers.Layer):
     """Global self-attention Transformer encoder block."""
@@ -61,18 +63,41 @@ class PositionalEncoding(tf.keras.layers.Layer):
         return inputs + self.pos_encoding[:, :tf.shape(inputs)[1], :]
 
 
-def build_transformer(
-    *,
-    seq_len: int,
-    n_features: int,
-    d_model: int = 64,
-    num_heads: int = 4,
-    ff_dim: int = 64,
-    num_layers: int = 2,
-    dropout: float = 0.1,
-    lr: float = 1e-3,
-) -> Model:
-    """Transformer to regress residual at t from a length=seq_len window."""
+def _select_features(X: np.ndarray, feature_indices: list[int] | None) -> np.ndarray:
+    if feature_indices is None:
+        return X
+    return X[:, feature_indices]
+
+
+def make_residual_sequences(X: np.ndarray, residual: np.ndarray, seq_len: int):
+    """
+    X: [N, F] (scaled features), residual: [N]
+    Build pairs: X_seq[t] = X[t-seq_len:t], y_seq[t] = residual[t]
+    for t = seq_len..N-1
+    """
+    X_seq = np.asarray([X[t - seq_len:t] for t in range(seq_len, len(X))], dtype=np.float32)
+    y_seq = np.asarray([residual[t] for t in range(seq_len, len(X))], dtype=np.float32)
+    return X_seq, y_seq
+
+
+def build_transformer_from_cfg(*, seq_len: int, n_features: int, cfg: dict) -> Model:
+    """
+    Build residual regressor with either:
+      - global attention (TransformerBlock)
+      - sparse attention (SparseAttentionBlock: local window + global tokens)
+    Controlled by cfg["attention"] in train_transformer_on_residual().
+    """
+    d_model = int(cfg.get("d_model", 64))
+    num_heads = int(cfg.get("num_heads", 4))
+    ff_dim = int(cfg.get("ff_dim", 64))
+    num_layers = int(cfg.get("num_layers", 2))
+    dropout = float(cfg.get("dropout", 0.1))
+    lr = float(cfg.get("lr", 1e-3))
+
+    attn_type = str(cfg.get("attention", "global")).lower().strip()
+    window_size = int(cfg.get("window_size", 8))
+    num_global_tokens = int(cfg.get("num_global_tokens", 2))
+
     inputs = Input(shape=(seq_len, n_features))
 
     x = Dense(d_model, activation="relu")(inputs)
@@ -82,7 +107,17 @@ def build_transformer(
     x = PositionalEncoding(seq_len, d_model)(x)
 
     for _ in range(num_layers):
-        x = TransformerBlock(d_model, num_heads, ff_dim, dropout)(x)
+        if attn_type == "sparse":
+            x = SparseAttentionBlock(
+                embed_dim=d_model,
+                num_heads=num_heads,
+                ff_dim=ff_dim,
+                window_size=window_size,
+                num_global_tokens=num_global_tokens,
+                dropout_rate=dropout,
+            )(x)
+        else:
+            x = TransformerBlock(d_model, num_heads, ff_dim, dropout)(x)
 
     x = GlobalAveragePooling1D()(x)
     x = Dense(32, activation="relu")(x)
@@ -95,25 +130,6 @@ def build_transformer(
     return model
 
 
-def _select_features(X: np.ndarray, feature_indices: list[int] | None) -> np.ndarray:
-    if feature_indices is None:
-        return X
-    return X[:, feature_indices]
-
-
-def make_residual_sequences(
-    X: np.ndarray, residual: np.ndarray, seq_len: int
-):
-    """
-    X: [N, F] (scaled features), residual: [N]
-    Build pairs: X_seq[t] = X[t-seq_len:t], y_seq[t] = residual[t]
-    for t = seq_len..N-1
-    """
-    X_seq = np.asarray([X[t - seq_len:t] for t in range(seq_len, len(X))], dtype=np.float32)
-    y_seq = np.asarray([residual[t] for t in range(seq_len, len(X))], dtype=np.float32)
-    return X_seq, y_seq
-
-
 def train_transformer_on_residual(
     *,
     X_train: np.ndarray,          # [Ntr, F] scaled
@@ -122,28 +138,38 @@ def train_transformer_on_residual(
     verbose: int = 0,
 ):
     """
+    Train Transformer (global or sparse attention) on residual sequences.
+
+    Required behavior:
+      - reads cfg["attention"] to select:
+          * "global" -> TransformerBlock
+          * "sparse" -> SparseAttentionBlock
+
     cfg supports:
+      - attention: "global" (default) | "sparse"
+      - window_size (sparse only, default 8)
+      - num_global_tokens (sparse only, default 2)
       - sequence_length (default 24)
-      - top_k_features (optional): if present, caller should already pass reduced X
       - d_model, num_heads, ff_dim, num_layers, dropout, lr
       - batch_size, epochs, validation_split, patience
       - lr_factor, lr_patience, min_lr
     """
     seq_len = int(cfg.get("sequence_length", 24))
 
+    # Defensive: ensure finite residuals
+    residual_train = np.asarray(residual_train, dtype=np.float32)
+    residual_train = np.where(np.isfinite(residual_train), residual_train, 0.0).astype(np.float32)
+
     X_seq, y_seq = make_residual_sequences(X_train, residual_train, seq_len)
     if len(X_seq) < 50:
         return None, {"seq_len": seq_len, "n_features": X_train.shape[1]}
 
-    model = build_transformer(
+    # ---- select attention type here (as requested) ----
+    # build_transformer_from_cfg reads cfg["attention"] internally
+    model = build_transformer_from_cfg(
         seq_len=seq_len,
         n_features=X_train.shape[1],
-        d_model=int(cfg.get("d_model", 64)),
-        num_heads=int(cfg.get("num_heads", 4)),
-        ff_dim=int(cfg.get("ff_dim", 64)),
-        num_layers=int(cfg.get("num_layers", 2)),
-        dropout=float(cfg.get("dropout", 0.1)),
-        lr=float(cfg.get("lr", 1e-3)),
+        cfg=cfg,
     )
 
     callbacks = [
@@ -163,14 +189,22 @@ def train_transformer_on_residual(
         callbacks=callbacks,
         verbose=verbose
     )
-    return model, {"seq_len": seq_len, "n_features": X_train.shape[1]}
+
+    meta = {
+        "seq_len": seq_len,
+        "n_features": X_train.shape[1],
+        "attention": str(cfg.get("attention", "global")).lower().strip(),
+        "window_size": int(cfg.get("window_size", 8)),
+        "num_global_tokens": int(cfg.get("num_global_tokens", 2)),
+    }
+    return model, meta
 
 
 def predict_residual_rolling(
     *,
     model,
     meta: dict,
-    X: np.ndarray,            # [N, F] scaled (already selected if needed)
+    X: np.ndarray,  # [N, F] scaled (already selected if needed)
 ):
     """
     Return residual_pred [N], with NaN for t < seq_len.
